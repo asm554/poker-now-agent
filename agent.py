@@ -14,14 +14,14 @@ import time
 import sys
 import random
 import anthropic
-from config import CDP_ENDPOINT, PLAYER_NAME, MODEL, API_KEY
+from bot_config import CDP_ENDPOINT, PLAYER_NAME, MODEL, API_KEY
 from scrape import get_poker_page, scrape_state, state_to_text
 from act import execute_action
 from hand_eval import get_equity, detect_draws, preflop_equity
 from opponent_model import OpponentModel
 from tracker import SessionTracker
 
-opp_tracker = OpponentModel()
+opp_tracker = tracker = OpponentModel()
 session_tracker = None  # initialized in run()
 
 # ---- Local Decision Engine ----
@@ -276,11 +276,16 @@ TOOLS = [{
     }
 }]
 
-client = anthropic.Anthropic(api_key=API_KEY)
+client = None
 
 
 async def llm_decision(state, state_text, equity, draws):
     """Ask Claude for complex decisions."""
+    global client
+    if not API_KEY or not MODEL:
+        raise RuntimeError('LLM requires ANTHROPIC_API_KEY and ANTHROPIC_MODEL')
+    if client is None:
+        client = anthropic.AsyncAnthropic(api_key=API_KEY)
     prompt = state_text
     prompt += f"\n\nEquity: {equity:.0f}%"
     if draws:
@@ -289,7 +294,7 @@ async def llm_decision(state, state_text, equity, draws):
     if reads and "No opponent" not in reads:
         prompt += f"\nOpponent reads:\n{reads}"
 
-    response = client.messages.create(
+    response = await client.messages.create(
         model=MODEL,
         max_tokens=80,
         system=SYSTEM_PROMPT,

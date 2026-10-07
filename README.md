@@ -1,3 +1,9 @@
+# Unser Fork: Browserbot für Spielgeld
+
+Die getestete Version und Startanleitung stehen in [README_OUR_BOT.md](README_OUR_BOT.md). Einstieg: `python -m practice.app`. Der lokale Übungspfad braucht keinen API-Schlüssel. Die nachfolgende Beschreibung gehört zum experimentellen Ursprungsprojekt und ist keine Funktionszusage unseres Forks.
+
+---
+
 # poker-now-agent
 
 **An AI that plays poker on [Poker Now](https://pokernow.com). For real. In real-time.**

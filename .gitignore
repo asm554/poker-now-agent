@@ -16,5 +16,8 @@ build/
 .venv/
 venv/
 .browser_profiles/
+.browser-cache/
+data/
+test-results/
 *.bak*
 *.png

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="de">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Unser Pokerbot · Spielgeld üben</title>
+<style>
+:root{font:16px/1.5 system-ui,sans-serif;color:#ebf3ef;background:#0d1717;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;padding:32px}main{max-width:1040px;margin:auto}header{display:flex;justify-content:space-between;align-items:center;gap:20px}h1{font-size:30px;margin:0}h2{font-size:18px;margin:0 0 12px}p{margin:8px 0}.muted{color:#9cb5ac}.badge{background:#233b32;color:#c2e9b2;padding:6px 12px;border-radius:20px;font-size:13px}.grid{display:grid;grid-template-columns:2fr 1fr;gap:24px;margin-top:28px}.felt{background:radial-gradient(ellipse,#234f40,#183a31);border:8px solid #34403a;border-radius:80px;padding:32px 20px;text-align:center;min-height:400px;display:flex;flex-direction:column;justify-content:space-between}.cards{display:flex;justify-content:center;gap:10px;min-height:70px;margin:8px 0}.card{background:#f7f4e9;color:#202c29;border-radius:8px;min-width:48px;padding:12px 8px;font-size:24px;font-weight:700;box-shadow:0 3px 4px #0004}.red{color:#b23936}.back{background:#254236;color:#b8cbbc;border:1px solid #749484}.pot{font-size:24px;font-weight:700}.panel{border:1px solid #2f443b;border-radius:16px;background:#162320;padding:20px}.controls{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}button,input{font:inherit;border-radius:8px;border:1px solid #5a7568;padding:10px 14px}button{background:#284d3b;cursor:pointer;color:#f0f7ef}button:hover{background:#356048}button:disabled{opacity:.4;cursor:default}.stop{background:#803e39;border-color:#ac665d}.primary{background:#b4dca4;color:#19281d;font-weight:700}.actionrow{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin:16px 0}input{width:120px;background:#0c1914}ol{padding-left:22px;max-height:220px;overflow:auto;font-size:13px;color:#bdcfc7}#error{color:#ffbfb1;min-height:24px}#reason{min-height:68px}#result{font-weight:700;min-height:28px}small{display:block;color:#9cb5ac}.meta{display:flex;justify-content:space-between;margin-bottom:14px;font-size:14px;color:#bad0c5}#botstate{font-weight:700;color:#c8e9b7}@media(max-width:760px){body{padding:16px}.grid{grid-template-columns:1fr}header{align-items:flex-start}h1{font-size:23px}.felt{border-radius:40px;min-height:360px}.card{min-width:40px;font-size:21px}}
+</style>
+<main>
+<header><div><h1>Unser Pokerbot</h1><p class="muted">Texas Hold’em · Heads-up · Blinds 5 / 10</p></div><span class="badge">Nur Spielgeld · lokal</span></header>
+<div class="grid"><section>
+<div class="meta"><span id="hand">Noch keine Hand</span><span id="street">Bereit</span></div>
+<div class="felt"><div><strong>Übungsgegner</strong><div id="opstack"></div><div class="cards" id="opcards"></div></div>
+<div><div class="pot" id="pot">Pot 0</div><div class="cards" id="board"></div><div id="result"></div></div>
+<div><div class="cards" id="mycards"></div><strong>Dein Platz</strong><div id="mystack"></div></div></div>
+<div class="actionrow" id="actions"></div>
+<div class="controls"><button data-testid="next-hand" id="new">Neue Hand</button><button id="reset">Sitzung zurücksetzen</button></div><p id="error" role="alert"></p>
+</section><aside class="panel"><h2>Browser übernimmt deinen Platz</h2><p id="botstate" role="status"></p><p id="lastaction" class="muted"></p><p id="reason"></p>
+<div class="controls"><button class="primary" id="start" data-testid="start-bot">Übernahme starten</button><button class="stop" id="stop" data-testid="stop-bot">Bot stoppen</button></div>
+<p><small id="heartbeat">Browserbot noch nicht verbunden.</small></p><p><small>Du kannst auch selbst klicken. Der Bot verwendet deine Karten und das sichtbare Board. Die Equity ist eine Schätzung gegen unbekannte Karten.</small></p><h2 style="margin-top:24px">Handverlauf</h2><ol id="log"></ol></aside></div>
+</main>
+<script id="table-state" type="application/json">{}</script>
+<script>
+const token='__TOKEN__';let state=null;let busy=false;let botConnectedAt=0;
+const $=id=>document.getElementById(id);
+async function send(path,data){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Practice-Token':token},body:JSON.stringify(data)});const value=await response.json();if(!response.ok)throw Error(value.error);render(value);return value}
+window.reportBot=async data=>send('/api/bot-status',data);
+window.botHeartbeat=()=>{botConnectedAt=Date.now();$('heartbeat').textContent='Browserbot verbunden.'};
+const symbols={h:'♥',s:'♠',d:'♦',c:'♣'};
+function cards(id,values,backs=0){const el=$(id);el.replaceChildren();const show=values.length?values:Array(backs).fill('?');for(const value of show){const c=document.createElement('span');c.className='card'+(value==='?'?' back':/[hd]$/.test(value)?' red':'');c.textContent=value==='?'?'?':value.slice(0,-1)+symbols[value.slice(-1)];el.append(c)}}
+function render(next){if(state&&next.hand_id===state.hand_id&&next.version<state.version)return;const changed=!state||next.decision_id!==state.decision_id;state=next;$('table-state').textContent=JSON.stringify(state);$('hand').textContent='Hand '+state.hand_id;$('street').textContent=state.done?'Hand beendet':state.street.toUpperCase();$('pot').textContent='Pot '+state.pot;$('mystack').textContent=state.stacks[0]+' Chips'+(state.dealer===0?' · Button / SB':' · BB');$('opstack').textContent=state.stacks[1]+' Chips';cards('mycards',state.my_cards);cards('board',state.board);cards('opcards',state.opponent_cards,state.hand_id?2:0);$('result').textContent=state.result;$('botstate').textContent=state.bot.status;$('lastaction').textContent=state.bot.action;$('reason').textContent=state.bot.reason;$('new').disabled=!state.done||Math.min(...state.stacks)===0;$('reset').disabled=!state.done||!state.paused;$('start').disabled=!state.paused;$('stop').disabled=state.paused;
+if(changed){$('actions').replaceChildren();for(const [action,value] of Object.entries(state.actions)){if(action==='raise'){const input=document.createElement('input');input.id='raise-amount';input.type='number';input.min=value.min;input.max=value.max;input.step=1;input.value=value.min;input.setAttribute('aria-label','Raise auf');input.dataset.testid='raise-amount';$('actions').append(input)}const btn=document.createElement('button');btn.dataset.testid='action-'+action;btn.dataset.decisionId=state.decision_id;btn.textContent={check:'Check',fold:'Fold',call:'Call '+value,raise:'Raise'}[action];btn.onclick=()=>play(btn,action);$('actions').append(btn)}}
+$('log').replaceChildren();for(const entry of state.log){const li=document.createElement('li');li.textContent=entry;$('log').append(li)}}
+async function play(button,action){if(busy)return;const id=button.dataset.expectedDecisionId||button.dataset.decisionId;const source=button.dataset.source||'manual';delete button.dataset.source;delete button.dataset.expectedDecisionId;const amount=action==='raise'?Number($('raise-amount').value):null;busy=true;try{await send('/api/action',{decision_id:id,action,amount,source});$('error').textContent=''}catch(e){$('error').textContent=e.message}finally{busy=false;refresh()}}
+$('new').onclick=async()=>{if(busy)return;const source=$('new').dataset.source||'manual';const id=$('new').dataset.expectedDecisionId||state.decision_id;delete $('new').dataset.source;delete $('new').dataset.expectedDecisionId;busy=true;try{await send('/api/new',{decision_id:id,source});$('error').textContent=''}catch(e){$('error').textContent=e.message}finally{busy=false}};
+$('start').onclick=()=>send('/api/control',{paused:false}).catch(e=>$('error').textContent=e.message);
+$('stop').onclick=()=>send('/api/control',{paused:true}).catch(e=>$('error').textContent=e.message);
+$('reset').onclick=()=>send('/api/reset',{}).catch(e=>$('error').textContent=e.message);
+async function refresh(){try{const response=await fetch('/api/state');if(!response.ok)throw Error('Tisch nicht erreichbar');render(await response.json());if(botConnectedAt&&Date.now()-botConnectedAt>5000)$('heartbeat').textContent='Browserbot getrennt – keine automatische Aktion.'}catch(e){$('error').textContent=e.message}}
+refresh();setInterval(refresh,400);
+</script></html>

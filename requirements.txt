@@ -1,2 +1,2 @@
-playwright
-anthropic
+playwright==1.63.0
+anthropic==1.12.0
