@@ -48,14 +48,33 @@ PREFLOP_SUITED = {
 RANK_ORDER = {"2":2,"3":3,"4":4,"5":5,"6":6,"7":7,"8":8,"9":9,"10":10,"T":10,"J":11,"Q":12,"K":13,"A":14}
 
 def normalize_card(card_str):
-    """Convert 'Ks' -> ('K','s'), '10h' -> ('T','h')"""
-    card_str = card_str.strip()
-    if len(card_str) == 3 and card_str[:2] == "10":
-        return ("T", card_str[2].lower())
-    return (card_str[:-1].upper(), card_str[-1].lower())
+    """Normalize and validate a card, including browser suit symbols."""
+    if isinstance(card_str, (tuple, list)) and len(card_str) == 2:
+        card_str = ''.join(card_str)
+    if not isinstance(card_str, str) or len(card_str.strip()) < 2:
+        raise ValueError("Invalid card")
+    value = card_str.strip().replace('\ufe0f', '')
+    rank = value[:-1].upper().replace('10', 'T')
+    suit = {'♥': 'h', '♠': 's', '♦': 'd', '♣': 'c'}.get(value[-1], value[-1].lower())
+    if rank not in '23456789TJQKA' or len(rank) != 1 or suit not in 'hsdc':
+        raise ValueError(f"Invalid card: {card_str}")
+    return rank, suit
+
+
+def validate_cards(my_cards, board_cards):
+    if len(my_cards) not in (2, 4) or len(board_cards) not in (0, 3, 4, 5):
+        raise ValueError("Expected 2 or 4 hole cards and 0, 3, 4 or 5 board cards")
+    cards = [normalize_card(c) for c in list(my_cards) + list(board_cards)]
+    if len(cards) != len(set(cards)):
+        raise ValueError("Duplicate card")
 
 def preflop_equity(card1_str, card2_str, num_opponents=1):
     """Look up preflop equity. Returns 0-100. Instant."""
+    validate_cards([card1_str, card2_str], [])
+    if type(num_opponents) is not int or not 1 <= num_opponents <= 9:
+        raise ValueError('Expected 1 to 9 opponents')
+    if num_opponents > 1:
+        return monte_carlo_equity([card1_str, card2_str], [], num_opponents, 500) * 100
     c1 = normalize_card(card1_str)
     c2 = normalize_card(card2_str)
     
@@ -78,12 +97,6 @@ def preflop_equity(card1_str, card2_str, num_opponents=1):
     else:
         key = r1 + r2
         eq = PREFLOP_OFFSUIT.get(key, 50.0)
-    
-    # Adjust for multi-way (v11: softer discount for 4-handed, was 0.85 → now 0.92)
-    # 0.85^3 = 0.614 (way too harsh — NIT folds 64% preflop)
-    # 0.92^3 = 0.779 (reasonable — equity drops ~22% vs 3 opponents)
-    if num_opponents > 1:
-        eq = eq * (0.92 ** (num_opponents - 1))
     
     return eq
 
@@ -225,14 +238,19 @@ def _is_playable(card1, card2):
 def monte_carlo_equity(my_cards, board_cards, num_opponents=1, simulations=200, is_plo=False):
     """
     Monte Carlo simulation of win rate. Returns 0.0-1.0.
-    v19: Opponents draw from a filtered range (top ~45% of hands) instead of
-    pure random. This fixes the hand-vs-random inflation where both players
-    show 80%+ equity simultaneously.
+    Unknown opponents use uniform random ranges, without betting-history inference.
     For PLO: must use exactly 2 hole + 3 board. Opponents get 4 cards too.
     For NLHE: best 5 from 7.
     """
-    my = [normalize_card(c) if isinstance(c, str) else c for c in my_cards]
-    board = [normalize_card(c) if isinstance(c, str) else c for c in board_cards]
+    validate_cards(my_cards, board_cards)
+    if type(num_opponents) is not int or not 1 <= num_opponents <= 9:
+        raise ValueError("Expected 1 to 9 opponents")
+    if not isinstance(simulations, int) or simulations <= 0:
+        raise ValueError("Expected positive simulation count")
+    if is_plo != (len(my_cards) == 4):
+        raise ValueError("Hole-card count does not match game type")
+    my = [normalize_card(c) for c in my_cards]
+    board = [normalize_card(c) for c in board_cards]
     
     used = set()
     for c in my + board:
@@ -242,8 +260,9 @@ def monte_carlo_equity(my_cards, board_cards, num_opponents=1, simulations=200, 
     cards_to_deal = 5 - len(board)
     opp_hole_count = 4 if is_plo else 2
     
-    wins = 0
-    ties = 0
+    if cards_to_deal + num_opponents * opp_hole_count > len(remaining):
+        raise ValueError("Too many players for remaining deck")
+    shares = 0.0
     
     for _ in range(simulations):
         random.shuffle(remaining)
@@ -258,24 +277,10 @@ def monte_carlo_equity(my_cards, board_cards, num_opponents=1, simulations=200, 
             my_hand = hand_rank(my + sim_board)
         
         beaten_all = True
-        tied_any = False
+        tied_players = 1
         for opp in range(num_opponents):
-            # v19: For NLHE postflop, filter opponent hands to playable range
-            # Try up to 5 draws to find a playable hand, then accept whatever we get
-            # (avoids infinite loop while still filtering most trash)
+            # Deal each unknown opponent a distinct uniform random hand.
             opp_cards = remaining[idx:idx+opp_hole_count]
-            if not is_plo and opp_hole_count == 2 and len(board) > 0:
-                best_opp = opp_cards
-                for attempt in range(5):
-                    candidate_start = idx + attempt * opp_hole_count
-                    if candidate_start + opp_hole_count > len(remaining):
-                        break
-                    candidate = remaining[candidate_start:candidate_start+opp_hole_count]
-                    if _is_playable(candidate[0], candidate[1]):
-                        best_opp = candidate
-                        idx = candidate_start  # advance idx to where we found it
-                        break
-                opp_cards = best_opp
             idx += opp_hole_count
             if idx > len(remaining):
                 break
@@ -287,15 +292,12 @@ def monte_carlo_equity(my_cards, board_cards, num_opponents=1, simulations=200, 
                 beaten_all = False
                 break
             elif opp_hand == my_hand:
-                tied_any = True
+                tied_players += 1
         
         if beaten_all:
-            if tied_any:
-                ties += 1
-            else:
-                wins += 1
+            shares += 1.0 / tied_players
     
-    return (wins + ties * 0.5) / max(simulations, 1)
+    return shares / simulations
 
 
 def get_equity(my_cards_str, board_cards_str=None, num_opponents=1):
@@ -306,6 +308,9 @@ def get_equity(my_cards_str, board_cards_str=None, num_opponents=1):
     Preflop PLO: uses Monte Carlo with fewer sims
     Postflop: uses Monte Carlo (fast)
     """
+    validate_cards(my_cards_str, board_cards_str or [])
+    if type(num_opponents) is not int or not 1 <= num_opponents <= 9:
+        raise ValueError('Expected 1 to 9 opponents')
     is_plo = len(my_cards_str) == 4
     
     if not board_cards_str or len(board_cards_str) == 0:
@@ -314,8 +319,10 @@ def get_equity(my_cards_str, board_cards_str=None, num_opponents=1):
             # PLO preflop — quick MC (100 sims, ~50ms)
             eq = monte_carlo_equity(my_cards_str, [], num_opponents, simulations=100, is_plo=True)
             return eq * 100
-        else:
+        elif num_opponents == 1:
             return preflop_equity(my_cards_str[0], my_cards_str[1], num_opponents)
+        else:
+            return monte_carlo_equity(my_cards_str, [], num_opponents, 500) * 100
     else:
         # Postflop — Monte Carlo
         sims = 200 if is_plo else 500  # more sims for better accuracy
@@ -327,12 +334,14 @@ def get_equity(my_cards_str, board_cards_str=None, num_opponents=1):
 
 def detect_draws(my_cards_str, board_cards_str):
     """Detect flush draws, straight draws, etc. Returns list of draw descriptions."""
-    if not board_cards_str:
+    validate_cards(my_cards_str, board_cards_str)
+    if not board_cards_str or len(board_cards_str) == 5:
         return []
     
     my = [normalize_card(c) for c in my_cards_str]
     board = [normalize_card(c) for c in board_cards_str]
     all_cards = my + board
+    is_plo = len(my) == 4
     
     draws = []
     
@@ -341,32 +350,31 @@ def detect_draws(my_cards_str, board_cards_str):
     suits = [c[1] for c in all_cards]
     sc = Counter(suits)
     for suit, count in sc.items():
-        if count == 4:
+        if count == 4 and not is_plo:
             my_in_suit = sum(1 for c in my if c[1] == suit)
             if my_in_suit >= 1:
                 draws.append("flush draw")
-        elif count >= 5:
-            my_in_suit = sum(1 for c in my if c[1] == suit)
-            if my_in_suit >= 1:
-                draws.append("flush!")
+    if is_plo:
+        for suit in 'hsdc':
+            if sum(c[1] == suit for c in my) >= 2 and sum(c[1] == suit for c in board) == 2:
+                draws.append('flush draw')
     
     # Straight draw
-    vals = sorted(set(RANK_ORDER.get(c[0], 0) for c in all_cards))
-    my_vals = set(RANK_ORDER.get(c[0], 0) for c in my)
-    
-    # Check for OESD (open-ended straight draw) or gutshot
-    for start in range(2, 11):
-        needed = set(range(start, start+5))
-        have = needed.intersection(set(vals))
-        missing = needed - set(vals)
-        if len(have) == 4 and len(missing) == 1:
-            # We contribute to this
-            if my_vals.intersection(have):
-                if min(missing) > min(needed) and max(missing) < max(needed):
-                    draws.append("gutshot")
-                else:
-                    draws.append("OESD")
-                break
+    def has_straight(future_board):
+        if is_plo:
+            groups = (list(h) + list(b) for h in combinations(my, 2) for b in combinations(future_board, 3))
+        else:
+            groups = combinations(my + future_board, 5)
+        for group in groups:
+            vals = {RANK_ORDER[c[0]] for c in group}
+            if len(vals) == 5 and (max(vals) - min(vals) == 4 or vals == {14, 2, 3, 4, 5}):
+                return True
+        return False
+
+    if not has_straight(board):
+        outs = {rank for rank in '23456789TJQKA' if has_straight(board + [(rank, 'x')])}
+        if outs:
+            draws.append('OESD' if len(outs) >= 2 else 'gutshot')
     
     return list(set(draws))
 

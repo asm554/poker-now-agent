@@ -7,7 +7,7 @@ import asyncio
 import json
 import re
 from playwright.async_api import async_playwright
-from config import CDP_ENDPOINT, PLAYER_NAME
+from bot_config import CDP_ENDPOINT, PLAYER_NAME
 
 SUIT_MAP = {"h": "♥", "s": "♠", "d": "♦", "c": "♣"}
 
